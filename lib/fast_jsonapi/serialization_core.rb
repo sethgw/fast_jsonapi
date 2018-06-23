@@ -80,8 +80,8 @@ module FastJsonapi
       end
 
       def relationships_hash(record, relationships = nil, params = {})
-        relationships = relationships_to_serialize if relationships.nil?
-
+        relationships = compute_relationships(relationships) || relationships_to_serialize
+        
         relationships.each_with_object({}) do |(_k, relationship), hash|
           name = relationship[:key]
           empty_case = relationship[:relationship_type] == :has_many ? [] : nil
@@ -91,7 +91,7 @@ module FastJsonapi
         end
       end
 
-      def record_hash(record, params = {}, attributes = nil)
+      def record_hash(record, params = {}, attributes = nil, relationships = nil)
         if cached
           record_hash = Rails.cache.fetch(record.cache_key, expires_in: cache_length, race_condition_ttl: race_condition_ttl) do
             temp_hash = id_hash(id_from_record(record), record_type, true)
@@ -106,7 +106,7 @@ module FastJsonapi
         else
           record_hash = id_hash(id_from_record(record), record_type, true)
           record_hash[:attributes] = attributes_hash(record, params, attributes) if attributes_to_serialize.present?
-          record_hash[:relationships] = relationships_hash(record, nil, params) if relationships_to_serialize.present?
+          record_hash[:relationships] = relationships_hash(record, relationships, params) if relationships_to_serialize.present?
           record_hash[:links] = links_hash(record, params) if data_links.present?
           record_hash
         end
@@ -137,9 +137,8 @@ module FastJsonapi
       end
 
       # includes handler
-      def get_included_records(record, includes_list, known_included_objects, params = {}, attributes = nil)
+      def get_included_records(record, includes_list, known_included_objects, params = {}, attributes = nil, relationships = nil)
         return unless includes_list.present?
-
         includes_list.sort.each_with_object([]) do |include_item, included_records|
           items = parse_include_item(include_item)
           items.each do |item|
@@ -164,7 +163,8 @@ module FastJsonapi
 
               known_included_objects[code] = inc_obj
               record_attributes = attributes[item] if attributes.is_a? Hash
-              included_records << serializer.record_hash(inc_obj, params, record_attributes)
+              record_relationships = relationships[item] if relationships.is_a? Hash
+              included_records << serializer.record_hash(inc_obj, params, record_attributes, record_relationships)
             end
           end
         end
@@ -184,6 +184,15 @@ module FastJsonapi
         end
 
         record.public_send(relationship[:id_method_name])
+      end
+
+      def compute_relationships(relationships = nil)
+        return unless relationships.is_a? Array
+        custom_relationships_to_serialize = {}
+        relationships.each do |relationship|
+          custom_relationships_to_serialize[relationship] = self.relationships_to_serialize[relationship]
+        end
+        custom_relationships_to_serialize
       end
     end
   end
